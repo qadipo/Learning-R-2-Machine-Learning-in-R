@@ -1,0 +1,335 @@
+---
+title: "Cluster Analysis of Customers with R"
+author: "QA"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Problem Definition
+#### 1. Research Question
+Perform cluster analysis to identify customer groups on a Russian brand, Kira Plastinina to help the sales team understand the customer characteristics.
+
+#### 2. Metrics of success
+Identification of customer groups characteristics.
+
+#### 3. Understanding the context
+Kira Plastinina is a Russian brand that is sold through a defunct chain of retail stores in Russia, Ukraine, Kazakhstan, Belarus, China, Philippines, and Armenia. The brand’s Sales and Marketing team would like to understand their customer’s behavior from data that they have collected over the past year. More specifically, they would like to learn the characteristics of customer groups.
+
+#### 4. Recording the experimental design
+1. Data Sourcing
+2. Check the Data
+3. Perform Data Cleaning
+4. Perform Exploratory Data Analysis
+5. Implement the Solution
+6. Challenge the Solution
+7. Follow up Questions
+
+## 1. Data Sourcing
+ [http://bit.ly/EcommerceCustomersDataset]
+
+## Data Loading and Inspection
+```{r}
+# Load libraries
+library(readr)
+library(tidyverse)
+library(psych)
+library(corrplot)
+library(BBmisc)
+library(caret)
+library(cluster)
+library(factoextra)
+library(NbClust)
+```
+```{r}
+df <- read_csv("C:\\Users\\Lenovo\\Downloads\\online_shoppers_intention.csv")
+# Preview data
+head(df)
+```
+## 2. Check the Data
+
+```{r}
+# Shape of data
+dim(df);
+# Column datatypes
+str(df);
+```
+
+
+```{r}
+# Data Summary
+summary(df)
+```
+The following columns contain some NA's:
+- Administrative
+- Administrative_Duration
+- Informational
+- Informational_Duration
+- ProductRelated
+- ProductRelated_Duration
+- BounceRates
+- ExitRates
+- PageValues
+
+**Worth noting:** There are durations that have **-1** as values that may need to be dropped.
+
+## 3. Data Cleaning
+```{r}
+# Checking for duplicated data
+anyDuplicated(df)
+```
+There are 159 duplicated rows
+
+```{r}
+# Dropping the Duplicated rows
+df <- df[!duplicated(df),]
+anyDuplicated((df))
+```
+BOOM! Duplicates gone
+
+```{r}
+# Get number of rows with null values
+df[!complete.cases(df),]
+```
+It is the same rows with missing values!!! *Drop them!!!*
+
+```{r}
+# Drop the NA rows
+df <- df[complete.cases(df),]
+```
+
+```{r}
+# Investigating the -1 values in the duration columns
+anomalies <- df %>% select(c(Administrative_Duration, Administrative, Informational_Duration, Informational, ProductRelated_Duration, ProductRelated)) %>% filter(Administrative_Duration == -1 | Informational_Duration == -1 | ProductRelated_Duration == -1)
+anomalies
+```
+> A total of 33 rows have the anomalies. 
+
+```{r}
+# Dropping the anomalies anomalous data
+df <- df %>% filter(Administrative_Duration != -1, Informational_Duration != -1, ProductRelated_Duration != 1)
+```
+
+
+```{r}
+# describe each column
+describe(df[, c(1:9)])
+```
+**Observations**
+- All the numerical columns data values are positively skewed
+- All the numerical columns data are leptokurtic
+
+```{r}
+# Outlier function
+outlier_detector <- function(x){
+  out <- boxplot.stats(x)$out
+  return((length(out)/  length(x)*100))
+}
+```
+```{r} 
+# Get outlier count per column
+sapply(df[,c(1:9)], outlier_detector)
+```
+**Observations**
+- PageValues column has the most outliers at 22.14%
+
+```{r}
+# Plot boxplots of columns with high % of outliers
+boxplot(df$Informational, df$Informational_Duration, df$PageValues,
+main = "Columns with high values of outliers",
+names = c("Informational", "Informational_Duration", "Page Values"),
+col = c("orange","red"),
+border = "brown",
+notch = TRUE)
+```
+**Observations**
+- All outliers are contained above the third quantile.
+- The outliers may be true values as sometimes durations spent on a page may be long
+
+## 4. Exploratory Data Analysis
+```{r}
+# Frequency distribution of categorical columns
+sapply(df[, c(10:18)], table)
+```
+
+*Summary of frequency table*
+- SpecialDay 0 has the highest count
+- May and November receives the highest traffic
+- Operating system 2 is the most used to visit the site
+- Browser 2 is most used by visitors
+- Most visitors to the site are from Region 1
+- Most of the traffic to the website is of type 2 and 1
+- Most of the visitors to the site are mostly returning visitors
+- Most visitors visit the site during the weekday
+- Most visits to the site do not earn revenue
+
+```{r}
+# Number of visits to product related pages per month
+product_stats <- df %>% select(ProductRelated, ProductRelated_Duration, Month)%>%group_by(Month)%>% summarise_all(mean)
+product_stats[order(product_stats$ProductRelated, decreasing = TRUE),]
+```
+
+November had the highest number of visits to product related pages with the highest duration
+
+```{r}
+# Distribution of revenue generating visits among visitors
+df %>% select(VisitorType, Revenue)%>% group_by(VisitorType, Revenue)%>% summarise(visits = n())%>% filter(Revenue==TRUE)
+```
+
+> Returning visitors have the generate the most revenue.
+
+```{r}
+# Distribution of revenue generating visits among regions
+df %>% select(Region, Revenue)%>% group_by(Region, Revenue)%>% summarise(visits = n())%>% filter(Revenue==TRUE)
+```
+Visitors from Region 1 make most revenue generating visits
+
+```{r}
+# Get page values and visits to product pages based on proximity to a special day
+special_product <- df %>% select(SpecialDay, PageValues, ProductRelated, ProductRelated_Duration)%>% group_by(SpecialDay)%>% summarise_all(mean)
+ggplot(special_product, aes(x = factor(SpecialDay), y=ProductRelated))+
+  geom_bar(fill = 'lightblue', stat = "identity", width = 0.6) +
+  labs(x = 'SpecialDay')+
+  coord_flip()
+```
+
+> On special days customers visit the highest number of product related pages, with the highest mean number of pages visited.
+
+```{r}
+# Distribution of revenue generating visits based on proximity to special days
+revenue_special <- df %>% select(SpecialDay, Revenue)%>% group_by(SpecialDay, Revenue)%>% summarise(count = n())%>% mutate(freq = count / sum(count)) %>% filter(Revenue==TRUE)%>% mutate(freq = round((freq * 100), 1)) 
+revenue_special <- revenue_special[order(revenue_special$freq, decreasing = TRUE),]
+ggplot(revenue_special, aes(x = factor(SpecialDay), y=freq))+
+  geom_bar(fill = 'lightblue', stat = "identity", width = 0.6) +
+  labs(y = '% of revenue generating', x = 'Special Days' )+
+  coord_flip()
+```
+> Ordinary days have the highest percentage of visits that are income generating
+
+```{r}
+# Get bounce rates and exit rates among visitor groups
+visitor_stats <- df %>% select(VisitorType, ExitRates, BounceRates)%>% group_by(VisitorType)%>%summarise_all(mean) 
+visitor_stats
+```
+**Observations**
+- Other visitors have the highest exit rates and bounce rates
+- New_Visitor have the lowest exit and bounce rates
+
+```{r}
+# Page views and durations based on visitor type
+df %>% select(VisitorType, Administrative:ProductRelated_Duration)%>% group_by(VisitorType)%>%summarise_all(mean)
+```
+
+**Observations**
+- On average that New_Vistor have the longest Administrative_Duration followed by Returning_Visitor and lastly Other
+- Returning_Visitor have on average the longest Informational_Duration and ProductRelated_Duration
+
+```{r}
+traffic_stats <- df %>% select(TrafficType, ExitRates, BounceRates)%>% group_by(TrafficType)%>% summarise_all(mean)
+par(mfrow = c(1,2))
+ggplot(traffic_stats, aes(x=TrafficType, y = ExitRates))+
+  geom_bar(stat = "identity", fill="peachpuff2")
+ggplot(traffic_stats, aes(x=TrafficType, y = BounceRates))+
+  geom_bar(stat = "identity", fill="peachpuff2")
+```
+> Traffic of type 15 have the highest bounce rates and average rates on average
+
+```{r}
+traffic_page_stats <- df %>% select(TrafficType, Administrative:ProductRelated_Duration)%>% group_by(TrafficType)%>% summarise_all(mean)
+par(mfrow = c(1,3))
+ggplot(traffic_page_stats, aes(x=TrafficType, y = Administrative))+
+  geom_bar(stat = "identity", fill="lightblue")
+ggplot(traffic_page_stats, aes(x=TrafficType, y = Informational))+
+  geom_bar(stat = "identity", fill="lightblue")
+ggplot(traffic_page_stats, aes(x=TrafficType, y = ProductRelated))+
+  geom_bar(stat = "identity", fill="lightblue")
+```
+**Observations**
+- Traffic 5 on average experiences the highest number of administrative visits
+- Traffic 14 on average experiences the highest number of informational visits
+- Traffic 14 on average experiences the highest number of ProductRelated visits
+
+```{r}
+# Correlational plot
+corrplot(corr = cor(df[, c(1:9)]), method = "number", type = "upper", order = "hclust", tl.col = "black", tl.cex = 0.6)
+```
+
+## 5. Solution Implementation
+### K-Means Clustering
+```{r}
+# One hot encode categorical features
+new_shoppers <- df[, 1:17]
+# new_shoppers[, 10:16] <- as.character(new_shoppers[, 10:16])
+dmy <- dummyVars("~ SpecialDay + Month + OperatingSystems + Browser + Region + TrafficType + VisitorType", data= new_shoppers)
+ohe <- data.frame(predict(dmy, newdata = new_shoppers))
+model_data <- cbind(new_shoppers[ , 1:9], ohe)
+model_data$Weekend <- as.numeric(df$Weekend)
+head(model_data)
+```
+```{r}
+colnames(df)
+```
+
+```{r}
+# Normalizing the continuous features
+model_data[, 1:9] <- normalize(model_data[, 1:9], method = "range")
+```
+```{r}
+# Performing  k-mean clustering with 5 clusters
+customer_groups <- kmeans(model_data, centers = 5, nstart = 25) 
+str(customer_groups)
+```
+
+```{r}
+# Cluster sizes
+customer_groups$size
+```
+The first cluster has the most components
+```{r}
+# Visualizing the  clusters
+fviz_cluster(customer_groups, data = model_data)
+```
+
+```{r}
+# 7 clusters
+customer_groups <- kmeans(model_data, centers = 7, nstart = 25)
+customer_groups$size
+```
+```{r}
+fviz_cluster(customer_groups, data = model_data)
+```
+After dimension reduction using PCA, the data has been separated into 7 distinct clusters.
+
+### Hierachical Clustering
+```{r}
+# Determining the optimal value for epislon
+dbscan::kNNdistplot(model_data, k =  7)
+abline(h = 0.23, lty = 2)
+```
+
+
+```{r}
+db_groups <- dbscan::dbscan(model_data, eps = 0.23, minPts = 7)
+db_groups
+```
+
+```{r}
+fviz_cluster(db_groups, model_data, geom="point")
+```
+ 
+> The clusters in our data are spherical
+ 
+### Cluster Analysis
+
+```{r}
+df <-  df %>% mutate(group = customer_groups$cluster)
+head(df)
+```
+
+```{r}
+# Summary Statistics
+summary_stats <- df %>% group_by(group)%>% select(Administrative:PageValues, group)%>% summarise_all(mean)
+summary_stats
+```
