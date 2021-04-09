@@ -1,0 +1,604 @@
+---
+title: "Who is likely to click the ad"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+
+## Defining the Research Question
+
+> Can one identify which individuals are most likely to click on a site.
+
+### Metric for Success
+> Identifying factors that are likely to influence whether a person would click on the ads on the site
+
+### Context
+> A Kenyan entrepreneur has created an online cryptography course and would want to advertise it on her blog. She currently targets audiences originating from various countries. In the past, she ran ads to advertise a related course on the same blog and collected data in the process to help her identify which individuals are most likely to click on her ads.
+
+### Experimentaal Design
+1. Load the data
+2. Data Cleaning
+3. Univariate Analysis
+4. Bivariate Analysis
+5. Recommendation
+
+### Appropriateness of the Data
+> The data available was not sufficient. More features should be added
+
+Loading the Data and the Libraries
+```{r}
+library(data.table)
+library("dplyr")
+library("ggplot2")
+library(ggstatsplot)
+library(vtree)
+library(Hmisc)
+library(lubridate)
+library(caret)
+library(moments)
+library(modeest)
+library(randomForest)
+```
+
+### 1. Loading the Data
+```{r}
+df <- fread('C:\\Users\\Lenovo\\Downloads\\advertising.csv')
+```
+
+
+```{r}
+# Previewing the data: Top
+head(df)
+```
+
+```{r}
+# Previwing the Bottom records
+tail(df)
+```
+
+### 2. Cleaning the Data
+
+#### Standardizing column name
+
+Changing columns to lower and replacing the whitespaces with underscore
+
+```{r}
+# Replacing the whitespaces with underscore
+names(df) <- gsub(" ","_", names(df))
+```
+```{r}
+# Viewing the column names
+colnames(df)
+```
+```{r}
+# Changing the column names to lower case
+names(df) <- tolower(names(df))
+```
+```{r}
+colnames(df)
+```
+### Duplicate Data
+```{r}
+# Checking for the presence of duplicate values
+anyDuplicated(df)
+```
+There are NO duplicated records in this data set
+
+### Missing Values
+```{r}
+# Checking for the presence of missing values
+colSums(is.na(df))
+```
+There are NO missing values in this data set
+
+### Exploring Outliers in the numerical columns
+
+````{r}
+# Checking for the data types
+str(df)
+```
+#### Encoding clicked_on_ad column
+```{r}
+# Encoding 0 to NO and  1 to YES
+#df$clicked_on_ad[df$clicked_on_ad == 1] <- "YES"
+#df$clicked_on_ad[df$clicked_on_ad == 0] <- "NO"
+#unique(df$clicked_on_ad)
+```
+
+#### Feature Extraction
+```{r}
+# Creating a date column
+df$date <- format(as.POSIXct.Date(df$timestamp,format="%Y:%m:%d %H:%M:%S"),"%Y-%m-%d")
+df$date <- as.Date(df$date, format = "%Y-%m-%d")
+```
+```{r}
+# Creating a hour column
+df$hour <- format(as.POSIXct(df$timestamp, format="%Y:%m:%d %H:%M:%S"),"%H")
+df$hour <- as.integer(df$hour) 
+```
+
+#### Dropping the timestamp column after extracting the date
+```{r}
+df = subset(df, select = -c(timestamp) )
+```
+```{r}
+str(df)
+```
+#### Encoding the male column
+```{r}
+# Encoding 0 with NO and 1 with YES
+#df$male[df$male == 1] <- "YES"
+#df$male[df$male == 0] <- "NO"
+#unique(df$male)
+```
+### OUTLIERS
+
+#### daily_time_spent_on_site
+```{r}
+# Checking for potential outliers in the daily_time_spent_on_site column
+boxplot.stats(df$daily_time_spent_on_site)$out
+```
+There is no outlier in the column daily_spent_on_site
+
+#### age
+```{r}
+# Checking for potential outliers in the age column
+boxplot.stats(df$age)$out
+```
+There is no outlier in the column age
+
+#### area_income
+```{r}
+boxplot.stats(df$area_income)$out
+```
+> This column has outliers
+
+```{r}
+# Exploring the extent of the outliers
+x <- boxplot.stats(df$area_income)$out
+print(paste("Percentage of outliers: ", (length(x)/length(df$area_income)*100), "%"))
+```
+Less than 1% of data in the area_income is considered outliers based on the IQR criterion. Dropping or imputing the outliers requires a further investigation into the data points. This shall be delved into during univariate analysis of the column.
+
+
+#### daily_internet_usage
+```{r}
+x <- boxplot.stats(df$daily_internet_usage)$out
+print(paste("Percentage of outliers: ", (length(x)/length(df$daily_internet_usage)*100), "%"))
+```
+> This dataset has NO outliers
+
+
+## 3. Univariate Analysis
+Creating Summaries of the Data
+
+```{r df}
+describe(df)
+```
+The above summary gives a shortcut to a deneral descritive stats of the various data columns. However, as will be demonstrated below we can do a step by step exploration of each data column
+
+#### COLUMN: daily_time_spent_on_site
+**Min, Mean, Qs and Max**
+```{r}
+summary(df$daily_time_spent_on_site)
+```
+
+**Mode, Skweness and Kurtosis**
+```{r}
+print(paste("Mode: ", mfv(df$daily_time_spent_on_site)))
+print(paste("Skewness: ",skewness(df$daily_time_spent_on_site)))
+print(paste("Kurtosis: ", kurtosis(df$daily_time_spent_on_site)))
+```
+*Obervations*
+1. Multi-modal
+2. Negatively skewed
+3. Leptokurtic
+
+##### Histogram of daily_time_spent_on_site
+```{r}
+hist(df$daily_time_spent_on_site,
+  xlab = "Daily Time Spent on Site",
+  main = "Histogram of Daily Time Spent on Site",
+  breaks = 15)
+```
+##### Boxplot of daily_time_spent_on_site
+```{r}
+boxplot(df$daily_time_spent_on_site, ylab = "Minutes", main = "Boxplot of Daily Time Spent on Site")
+```
+#### COLUMN: AGE
+**Min, Mean, Qs and Max**
+```{r}
+summary(df$age)
+```
+
+**Mode, Skewness and Kurosis**
+```{r}
+print(paste("Mode: ", mfv(df$age)))
+print(paste("Skewness: ",skewness(df$age)))
+print(paste("Kurtosis: ", kurtosis(df$age)))
+```
+*Observation*
+1. the data could be multimodal
+2. It is positively skewed
+3. It is leptokurtic
+
+##### Histogram of age
+```{r}
+hist(df$age,
+  xlab = "Age",
+  main = "Histogram of the Age",
+  breaks = 9,)
+```
+##### Boxplot of age
+```{r}
+boxplot(df$age, ylab = "Age", main = "Boxplot of Age")
+```
+
+#### COLUMN: area_income
+
+**Min, Mean, Qs and Max**
+```{r}
+summary(df$area_income)
+```
+**Mode, Skewness and Kurosis**
+```{r}
+# print(paste("Mode: ", mfv(df$area_income))) # All the values are unique
+print(paste("Skewness: ", skewness(df$area_income)))
+print(paste("Kurtosis: ", kurtosis(df$area_income)))
+```
+*Observations*
+1. The data is skewed negatively'
+2. The data is leptokurtic
+
+##### Histogram of Area Income
+```{r}
+hist(df$area_income,
+  xlab = "Area Income",
+  main = "Histogram of the Area Income",
+  breaks = 10)
+```
+##### Boxplot of Area Income
+```{r}
+boxplot(df$area_income, ylab = "Area Income", main = "Boxplot of Area Income")
+```
+There are some areas with extremely low incomes that have been classified as outliers
+
+##### Exploring the OUTLIERS in the area_income column. 
+We are going to extraxt the specific rows that contain the outliers for further investigation
+
+```{r}
+outlier_income <- boxplot.stats(df$area_income)$out
+outlier_income_ind <- which(df$area_income %in% c(outlier_income))
+outlier_income_ind
+```
+Using the above positions we shall then go ahead to extract the entire row entries
+
+```{r}
+df[outlier_income_ind, ]
+```
+Analysis of these rows whose area_income values appear as outliers indicate that all of these had the ad_topic_line clicked on. Notably, they are for Belize, Algeria, Azerbaijan, Tajikistan, Labanon, El Salcador, Jersey and Luxembourg. It would be well to consider dropping these values. 
+
+##### Dropping the outlier values
+```{r}
+# This has been done using the dplyr library
+df <- df %>% slice(-c(outlier_income_ind))
+boxplot(df$area_income)
+```
+After dropping the earlier 8 outliers our new boxplot introduces two new outliers that were not in the ealier list of outliers
+
+#### COLUMN: daily_internet_usage
+**Min, Mean, Qs and Max**
+```{r}
+summary(df$daily_internet_usage)
+```
+**Mode, Skewness and Kurosis**
+```{r}
+print(paste("Mode: ", mfv(df$daily_internet_usage)))
+print(paste("Skewness: ", skewness(df$daily_internet_usage)))
+print(paste("Kurtosis: ", kurtosis(df$daily_internet_usage)))
+```
+*Observations*
+1. This column is multi-modal
+2. The data is negatively skewed
+3. The data is leptokurtic
+
+##### Histogram of Area Income
+```{r}
+hist(df$daily_internet_usage,
+  xlab = "Internet Usage",
+  main = "Histogram of the Daily Internet Usage",
+  breaks = 20)
+```
+##### Boxplot of Daily Internet Usage
+```{r}
+boxplot(df$daily_internet_usage, ylab = "Area Income", main = "Boxplot of Daily Internet Usage")
+```
+#### COLUMN: hour
+**Min, Mean, Qs and Max**
+```{r}
+summary(df$hour)
+```
+
+**Mode, Skweness and Kurtosis**
+```{r}
+print(paste("Mode: ", mfv(df$hour)))
+print(paste("Skewness: ",skewness(df$hour)))
+print(paste("Kurtosis: ", kurtosis(df$hour)))
+```
+*Obervations*
+1. Multi-modal
+2. Negatively skewed
+3. Leptokurtic
+
+##### Histogram of hour
+```{r}
+ggplot(df, aes(hour)) +
+  geom_bar(fill = "#0073C2FF")
+```
+The most popular hour of the day visitting the site is the 7 hour
+
+#### COLUMN: ad_topic_line
+**Frequency Table**
+```{r}
+# This has been done using the dplyr library
+topic_line_summary <- df %>%
+  count(ad_topic_line, sort = TRUE)
+
+topic_line_summary[1:10]
+```
+The ad topic lines are unique.
+
+#### COLUMN: city
+**Frequency Table**
+```{r}
+# This has been done using the dplyr library
+city_line_summary <- df %>%
+  count(city, sort = TRUE)
+
+city_line_summary[1:10]
+```
+Lisamouth and Williamsport are cities with the most visitors to the site.
+
+#### COLUMN: male
+**Frequency Table**
+```{r}
+as.data.frame(table(df$male))
+```
+##### Visualizing the above information
+```{r}
+# Using the vtree library
+vtree(df, "male")
+```
+52% of the visitors of the sight were from the female gender whreas 48% were of the male gender
+
+#### COLUMN: country
+**Frequency Table**
+```{r}
+# This has been done using the dplyr library
+country_summary <- df %>%
+  count(country, sort = TRUE)
+
+country_summary[1:10]
+```
+
+Czech Republic and France produced the most visitors to the site
+
+#### COLUMN: clicked_on_ad
+**Frequency Table**
+```{r}
+clicked_on_add_summary <- df %>%
+  count(clicked_on_ad, sort = TRUE)
+
+clicked_on_add_summary
+```
+##### Visualizing the above information
+```{r}
+# Using the vtree library
+vtree(df, "clicked_on_ad")
+```
+Almost 50% (49.60%) of the site visitors clicked on the adds
+
+
+## 4. Bivariate Analysis
+Here we are going to compare other features with whether the individual clicked on the ad
+
+### Correlational Analysis
+```{r}
+num_cols <- unlist(lapply(df, is.numeric)) # Identifying numeric columns
+num_cols
+```
+```{r}
+data_num <- subset(df, select=num_cols)                       # Subset numeric columns of data
+data_num[1:10]
+```
+
+```{r}
+# Correlation Matrix
+cor(data_num)
+```
+Visualizing the above result
+
+```{r}
+ggcorrmat(data_num)
+```
+*Observations*
+1. There is a *strong positive* correlation between daily_internet_usage and daily_time_spent_on_site
+2. There is a moderate positive correlation between daily_time_spent_on_site and area_income, daily_internet_usage and area_income
+3. There is a moderate negative correlation between age and daily_time_spent_on_site, daily_internet_usage and age
+4. There is a weak negative correlation between area_income and age
+
+### Covariance Analysis
+```{r}
+for (i in colnames(data_num)){
+  print(paste(toupper(i)))
+  for(j in colnames(data_num)){
+    print(paste("Covariance between",i,":",j,cov(df$daily_time_spent_on_site,df[[j]])))
+  }
+  print(paste("*******************************"))
+}
+
+```
+*Observations*
+1. There is a very high *positive* covariance between area_income and daily_time_spent_on_site, age and daily_internet_usage
+2. There is a *negative* covariance between age and daily_time_spent_on_site, area_income and daily_internet_usage
+
+### Scatter Plots
+```{r}
+for (i in colnames(data_num)){
+  for(j in colnames(data_num)){
+    plot(data_num[[i]], data_num[[j]], xlab= i, ylab=j)
+  }
+}
+```
+*Observations*
+The graphs do not indicate linear relationship between different features.
+
+### Incoporating some categorical variables
+#### Clicked vs Daily Times
+```{r}
+# Plot the chart.
+boxplot(daily_time_spent_on_site ~ clicked_on_ad, data = df, xlab = "Clicked",
+   ylab = "Time", main = "Time Spent on Site")
+```
+On average those who spend shorter times on the internet are likely to click on the ad
+
+#### Clicked vs Age
+```{r}
+# Plot the chart.
+boxplot(age ~ clicked_on_ad, data = df, xlab = "Clicked",
+   ylab = "Age", main = "Age vs Clicking")
+```
+On average older people click ads as compared to younger people
+
+#### Clicked vs Area Income
+```{r}
+# Plot the chart.
+boxplot(area_income ~ clicked_on_ad, data = df, xlab = "Clicked",
+   ylab = "Area Income", main = "Area Income vs Clicking")
+```
+Those from high income areas are less likely to click on the ad
+
+#### Clicked vs Daily Internet Usage
+```{r}
+# Plot the chart.
+boxplot(daily_internet_usage ~ clicked_on_ad, data = df, xlab = "Clicked",
+   ylab = "Daily Internet Usage", main = "Daily Internet Usage vs Clicking")
+```
+Those who spend less time on the internet are more likely click on the ad
+
+#### Clicked vs Male
+```{r}
+vtree(df, c("male", "clicked_on_ad"), 
+   fillcolor = c( male = "#e7d4e8", clicked_on_ad = "#99d8c9"))
+```
+**Observations*
+1. Most of the visitors to the site were Female
+2. Females are more likely to click on the ad than males
+
+## 5. Modelling
+```{r}
+# Dropping columns
+modelling_data2 <-df %>% select(-c(city, ad_topic_line, country, date))
+modelling_data2[1:10]
+```
+```{r}
+# Splitting the dataset
+input_data <- createDataPartition(y = modelling_data2$clicked_on_ad, p=0.7, list = F)
+training <- modelling_data2[input_data,]
+testing <- modelling_data2[-input_data, ]
+dim(training);
+dim(testing)
+```
+**Random Forest Model**
+
+```{r}
+# Apply random forest model
+set.seed(42)
+myGrid <- expand.grid(mtry = c(4,5,6),  splitrule = c("gini", "extratrees"),
+                     min.node.size = 10)
+forest_model <- train(clicked_on_ad ~ .,
+               data = training,
+               method = "ranger", 
+               tuneGrid = myGrid,
+               trControl = trainControl(method = "cv",
+                                       number = 5,
+                                       verboseIter = FALSE))
+# Printing the model
+forest_model
+```
+
+```{r}
+forest_pred <- predict(forest_model, newdata = testing)
+confusionMatrix(table(forest_pred, testing$clicked_on_ad))
+```
+```{r}
+# Checking for the variable importance
+varImpPlot(rf_classifier)
+```
+
+
+**Support Vector Machine**
+```{r}
+# Support vector model
+trctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+svm_Linear <- train(clicked_on_ad ~., data = training, method = "svmLinear",
+trControl=trctrl,
+preProcess = c("center", "scale"),
+tuneLength = 10)
+
+
+svm_Linear <- train(clicked_on_ad ~., data = training, method = "svmLinear",
+trControl=trctrl,
+preProcess = c("center", "scale"),
+tuneLength = 10)
+```
+```{r}
+# Converting our target variable to a factor
+training[["clicked_on_ad"]] = factor(training[["clicked_on_ad"]])
+
+# Controlling training overheads
+trctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+
+# Train method
+svm_Linear <- train(clicked_on_ad ~., data = training, method = "svmLinear",
+trControl=trctrl,
+preProcess = c("center", "scale"),
+tuneLength = 10)
+```
+
+```{r}
+# Checking the results of our train method
+svm_Linear
+```
+```{r}
+# Using the train() method to predict our results
+test_pred <- predict(svm_Linear, newdata = testing)
+```
+```{r}
+# Checking accuracy of our model using a confusion matrix
+confusionMatrix(table(test_pred, testing$clicked_on_ad))
+```
+```{r}
+# Testing various values of C using expand.grid()
+grid <- expand.grid(C = c(0,0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2,5))
+svm_Linear_Grid <- train(clicked_on_ad ~., data = training, method = "svmLinear",
+trControl=trctrl,
+preProcess = c("center", "scale"),
+tuneGrid = grid,
+tuneLength = 10)
+svm_Linear_Grid
+plot(svm_Linear_Grid)
+```
+> The best value of c is at about 0.3 - 0.4 and so we are going to use 0.35 to see if the model prediction improves
+
+```{r}
+test_pred_grid <- predict(svm_Linear_Grid, newdata = testing)
+confusionMatrix(table(test_pred_grid, testing$clicked_on_ad))
+```
+## 6. Recommendations
+
+1. The most popular hour of the day to run advert is 7 am
+2. Targeting the female audience will lead to increased clicks
+
